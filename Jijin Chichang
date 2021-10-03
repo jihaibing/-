@@ -1,0 +1,285 @@
+from urllib import request
+from bs4 import BeautifulSoup
+import re
+import pymysql
+import time
+import pandas as pd
+from sqlalchemy import create_engine
+import numpy as np
+
+# fundSharesList = []
+
+
+#MySQL的用户：root, 密码:147369, 端口：3306,数据库：test
+engine = create_engine('mysql+pymysql://root:qaz-1234567890@localhost:3306/pythonDB')
+# df = pd.DataFrame()
+
+head = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.141 Safari/537.36"
+}
+
+find = {
+    1: re.compile(r'html">(.*?)</a></td>'),
+    2: re.compile(r'html">(.*?)</a></td>'),
+    6: re.compile(r'">(.*?)</td>'),
+    7: re.compile(r'">(.*?)</td>'),
+    8: re.compile(r'">(.*?)</td>')
+}
+
+find2 = {
+    1: re.compile(r'html">(.*?)</a></td>'),
+    2: re.compile(r'html">(.*?)</a></td>'),
+    4: re.compile(r'">(.*?)</td>'),
+    5: re.compile(r'">(.*?)</td>'),
+    6: re.compile(r'">(.*?)</td>')
+}
+
+find3 = {
+    1: re.compile(r'="">(.*?)</span></td>'),
+    2: re.compile(r'html">(.*?)</a></td>'),
+    4: re.compile(r'">(.*?)</td>'),
+    5: re.compile(r'">(.*?)</td>'),
+    6: re.compile(r'">(.*?)</td>')
+}
+
+find4 = {
+    1: re.compile(r'="">(.*?)</span></td>'),
+    2: re.compile(r'<span>(.*?)</span></td>'),
+    4: re.compile(r'">(.*?)</td>'),
+    5: re.compile(r'">(.*?)</td>'),
+    6: re.compile(r'">(.*?)</td>')
+}
+
+if __name__ == "__main__":
+    funds = []
+    fundNum = 0
+    errorNum = 0
+
+    send = request.Request("http://fund.eastmoney.com/js/fundcode_search.js", headers=head)
+    response = request.urlopen(send)
+    js = response.read().decode('utf-8')
+    js = js[11:len(js) - 3].split("],[")
+    # print(js)
+    # print(len(js))
+    for i in range(0, len(js)):
+        fund = str(js[i]).replace('"', '')
+        fund = fund.split(",")
+        funds.append(fund)
+        # print(fund)
+        # if fund[3] == "混合型" or fund[3] == "股票型":
+        #     # print(fund)
+        #     funds.append(fund)
+
+        # print(fund[0]) #fund0表示基金代码 fund2基金名称
+    #print(len(funds)) #出现次数714
+    #print(funds)
+    #for lines in funds:  行转列显示，共715个基金
+    #    print(lines)
+    #print(funds[0][2])
+    #print(funds[1][2])
+    # for fundNum in range(len(funds)):
+
+    while fundNum < len(funds): #从0开始 取714个基金
+        fund_id = funds[fundNum][0]
+        fundSharesList = []
+        #print(fund_id)
+#        print(fund_id + " " + funds[fundNum][2])
+        #fund_id = "004283"
+        fund_name = funds[fundNum][2]
+        # print(fund_name)
+        try:
+
+            url = "http://fundf10.eastmoney.com/FundArchivesDatas.aspx?type=jjcc&code=" + str(
+                fund_id) + "&topline=10&year=2021&month=&rt=0.21822537857648627"
+            # print(url)
+            send = request.Request(url, headers=head)
+            response = request.urlopen(send, timeout=10)
+            html = response.read().decode('utf-8')
+            #print(html)
+
+            bs = BeautifulSoup(html, "html.parser")
+            #print(bs) #包含基金名 还有1季度 2季度持仓明细的字段
+
+            ud_arr = []
+            for label in bs.find_all(attrs={'class': 'left'}, name='label'):
+                # print(label.text.split("年"))
+                t = label.text.split("年")
+                #print(t)
+                #print(len(t)) # 2 这个长度怎么来的？
+
+                str1 = t[len(t) - 2] #t[0]
+                #print(str1) # 为什么会打印两遍，此处打印的是基金名称，加上它的持仓年份，打印如 某股票 2021
+                str2 = t[len(t) - 1] #t[1]
+                #print(str2) #打印如 2季度持仓明细
+                #print(len(str1)) 长度为15
+
+                str1 = str1[len(str1) - 4:len(str1)] # str1[11:15], 11 12 13 14 ,正好打印年份
+
+                #print(str1) #能打印出年份 如此处是2021
+                str2 = str2[0:1]
+                #print(str2)
+                ud_arr.append(str1 + '-' + str2)
+                #print(ud_arr) #打印年月 2021-1 2021-2
+
+            find_list = bs.find_all("tbody")
+            #print(find_list) #打印tbody元素里包含的内容， 包含1季度持仓 和2季度持仓
+
+            ud_idx = 0
+            for body in find_list:
+                # print(body)
+                tr = body.find_all("tr")
+                # print(len(tr)) #打印出10
+                ud = ud_arr[ud_idx]
+                # print(ud) # 打印年月
+                ud_idx += 1
+                # print(ud_idx) # 打印数字1 2, 用于区分1季度 和2 季度持仓区别 id
+
+                for i in tr:
+                    td = i.find_all("td")
+                    #print(td) 为什么1季度 2季度取的td元素内包含的内容 有不同 2季度9个TD 1季度7个TD 为什么呢
+                    fundShares = [] #定义列表
+
+                    # 判断格式（9个TD，7个TD） 9打印的是1月，7代表的是2月份数据
+                    #print(len(td)) #打印出10个9 10个7
+
+                    if len(td) == 9:
+
+                        # print("============类型11111============")  这个数据是 打印的2021年1月持仓
+                        for j in range(0, len(td)):
+                            if j in [1, 2, 6, 7, 8]:
+                                # print("j: %s" % (j))
+                                # print(td[j]) # 取 html 的td元素内容， 主要有基金股票持仓代码，名称，持仓率，股数，市值
+                                # print(re.findall(find[j],str(td[j]))) # 将内容转成列表
+                                aa = re.findall(find[j], str(td[j]))
+                                #print(aa) #按行打印出列表 10大持仓
+                                #print(len(aa)) 按行打印50个1 因为10大持仓股票，每个持仓有5个字段
+                                if len(aa) == 0:
+                                    # print("数据格式不正确, 调整解析格式")
+                                    # print(find3[j])
+                                    # print(re.findall(find3[j],str(td[j])))
+                                    aa = re.findall(find3[j], str(td[j]))
+                                    #print(aa) 此处aa也不执行
+                                    if len(aa) == 0:
+                                        aa = re.findall(find4[j], str(td[j]))
+                                        # print(aa) 没有为0，此处会不执行
+
+                                        if len(aa) == 0:
+                                            # print(td[j])
+                                            print("数据格式不正确, 调整解析格式")
+                                        else:
+                                            a = aa[0]
+                                    else:
+                                        a = aa[0]
+                                else:
+                                    a = aa[0]
+                                    #print(a) #此处打印 第一个基金的10大持仓数据，非列表，但是没持仓日期，前提是while break开启，否则打印所有基金数据
+
+                                if j >= 6:
+                                    a = str(a).replace("%", "").replace(",", "")
+                                    #print(a)
+                                    #print(len(a))
+
+                                    if (len(a) > 8):
+                                        time.sleep(3)
+                                # fundShares.append(a) 注释
+
+
+
+                                #print(fundShares) #打印10大持仓，每行1 2 3 4 5个字段 逐行增加一个组成列表，每行都是列表
+
+                        # fundShares.append(ud) 注释
+                        # fundShares.append(fund_id) 注释
+
+                        # print(fundShares) #打印1月份数据
+                        # df1 = pd.DataFrame(fundShares)
+                        # print(df1)
+                        # for index, row in df1.iterrows():
+                        #     print(index)
+                        # for index, row in df1.iteritems():
+                        #     print(index)
+                        # fundSharesList.append(fundShares) 注释
+                        # df2 = pd.DataFrame(fundSharesList)
+                        # print(df2)
+
+
+
+                        #print(fundSharesList1)
+
+                    else:
+                        # print("============类型22222============") 这个数据是2021年2月的持仓数据
+                        for j in range(0, len(td)):
+                            if j in [1, 2, 4, 5, 6]:
+                                # print("j: %s" % (j))
+                                # print(td[j])
+                                # print(re.findall(find[j],str(td[j])))
+                                aa = re.findall(find2[j], str(td[j]))
+                                # print(len(aa))
+                                if len(aa) == 0:
+                                    # print("数据格式不正确, 调整解析格式")
+                                    # print(find3[j])
+                                    # print(re.findall(find3[j],str(td[j])))
+                                    aa = re.findall(find3[j], str(td[j]))
+                                    if len(aa) == 0:
+                                        aa = re.findall(find4[j], str(td[j]))
+                                        if len(aa) == 0:
+                                            # print(td[j])
+                                            print("数据格式不正确, 调整解析格式")
+                                        else:
+                                            a = aa[0]
+                                    else:
+                                        a = aa[0]
+                                else:
+                                    a = aa[0]
+
+                                # print(a)
+                                if j >= 4:
+                                    a = str(a).replace("%", "").replace(",", "")
+                                    # print(a)
+                                    if (len(a) > 8):
+                                        time.sleep(3)
+                                fundShares.append(a)
+                                #print(fundShares)
+
+                        fundShares.append(ud) # ud代表年月
+                        fundShares.append(fund_id)
+                        fundSharesList.append(fundShares)
+
+
+
+                        #print(fundShares) #打印2月份数据
+
+            # mysql.updateFundStock(fund_id, fundSharesList)
+
+        except Exception as e:
+            print("(%s, %s)基金持仓获取失败!" % (fund_id, funds[fundNum][1]))
+            print(e)
+            errorNum = errorNum + 1
+            # if str(e) =="timed out" and errorNum <= 3:
+            #     print("第" + str(errorNum) + "次超时，重试")
+            #     errorNum = errorNum + 1
+            #     fundNum = fundNum - 1
+            print("共计失败次数：%s" % (errorNum))
+
+
+        fundNum = fundNum + 1
+        #print(fundNum)
+        #break
+
+
+        # print(fundSharesList)
+
+
+        try:
+            df = pd.DataFrame(fundSharesList, columns=['code', 'name', 'netWorth', 'wanGu', 'shiZhi', 'quarter', 'fundId'])
+            # print(df)
+            pd.io.sql.to_sql(df, 'test1', con=engine, schema='pythonDB', if_exists='append', index=False)
+        except Exception as cc:
+            print(cc)
+
+
+
+
+
+
+
+
